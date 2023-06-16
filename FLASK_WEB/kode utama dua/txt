@@ -1,0 +1,167 @@
+app.py
+
+
+
+import cv2
+import json
+import threading
+from flask import Flask, render_template, Response
+
+app = Flask(__name__)
+# URL video streaming
+url = 'http://192.168.1.12:8080/video'
+
+# Buat objek VideoCapture menggunakan URL
+cap = cv2.VideoCapture(url)
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+
+stop_program = False
+classId_Result = []
+classId_Result_lock = threading.Lock()
+
+def process_image():
+    global classId_Result, stop_program
+
+    classNames = []
+    classFile = 'coco.names'  # Ganti dengan path ke file coco.names
+    with open(classFile, 'rt') as f:
+        classNames = f.read().rstrip('\n').split('\n')
+
+    configPath = 'ssd_mobilenet_v3_large_coco_2020_01_14.pbtxt'  # Ganti dengan path ke file pbtxt
+    weightsPath = 'frozen_inference_graph.pb'  # Ganti dengan path ke file pb
+
+    net = cv2.dnn_DetectionModel(weightsPath, configPath)
+    net.setInputSize(320, 320)
+    net.setInputScale(1.0 / 127.5)
+    net.setInputMean((127.5, 127.5, 127.5))
+    net.setInputSwapRB(True)
+
+    while not stop_program:
+        success, img = cap.read()
+        classIds, confs, bbox = net.detect(img, confThreshold=0.5)
+
+        with classId_Result_lock:
+            classId_Result = classIds
+        if len(classIds) != 0:
+            for classId, confidence, box in zip(classIds.flatten(), confs.flatten(), bbox):
+                cv2.rectangle(img, box, color=(0, 255, 0), thickness=2)
+                cv2.putText(img, classNames[classId - 1].upper(), (box[0] + 10, box[1] + 30),
+                            cv2.FONT_HERSHEY_COMPLEX, 1, (0, 250, 0), 2)
+                cv2.putText(img, str(round(confidence * 100, 2)), (box[0] + 200, box[1] + 30),
+                            cv2.FONT_HERSHEY_COMPLEX, 1, (0, 250, 0), 2)
+
+        ret, frame = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 50])
+        frame = frame.tobytes()
+        yield (b'--frame\r\n'
+            b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
+
+    cap.release()
+
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+
+@app.route('/get_classid_result')
+def get_classid_result():
+    # Ambil nilai classId_Result
+    global classId_Result
+    result = json.dumps(classId_Result)
+    return result, 200, {'Content-Type': 'application/json'}
+
+
+@app.route('/video_feed')
+def video_feed():
+    return Response(process_image(), mimetype='multipart/x-mixed-replace; boundary=frame')
+
+if __name__ == '__main__':
+    app.run(debug=True)
+    stop_program = True
+    cv2.destroyAllWindows()
+
+
+
+
+html
+<!DOCTYPE html>
+<html>
+<head>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <title>Deteksi Objek</title>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+</head>
+<body>
+    <h1>Deteksi Objek</h1>
+    <div class="container">
+        <img src="{{ url_for('video_feed') }}" />
+    </div>
+
+    <div>
+        <h2>Hasil Deteksi:</h2>
+        <ul id="resultList"></ul>
+    
+        <script type="text/javascript">
+            $(document).ready(function() {
+                setInterval(function() {
+                    $.ajax({
+                        url: '/get_classid_result',
+                        type: 'GET',
+                        dataType: 'json',
+                        success: function(data) {
+                            updateClassIdResult(data);
+                        }
+                    });
+                }, 1000); // Mengambil nilai setiap 1 detik
+    
+                function updateClassIdResult(classId_Result) {
+                    var resultList = $('#resultList');
+                    resultList.empty();
+                    for (var i = 0; i < classId_Result.length; i++) {
+                        var listItem = $('<li>').text(classId_Result[i]);
+                        resultList.append(listItem);
+                    }
+                }
+            });
+        </script>
+</div>
+    
+    <audio id="audioPlayer">
+        <source src="{{ url_for('static', filename='sound/manusia.wav') }}" type="audio/wav">
+        Peramban Anda tidak mendukung elemen audio.
+    </audio>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            var audioPlayer = document.getElementById('audioPlayer');
+            audioPlayer.play().catch(function(error) {
+                console.log('Autoplay dihentikan.');
+                // Tangani kesalahan atau tampilkan pesan kepada pengguna.
+            });
+
+            document.addEventListener('click', function() {
+                audioPlayer.play();
+            });
+        });
+    </script>
+</body>
+</html>
+
+css 
+body {
+    background-color: #ffff;
+    font-family: Arial, sans-serif;
+    margin: 0 auto;
+  }
+  
+  h1 {
+    color: black;
+    text-align: center;
+  }
+  
+  .container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+
+  }

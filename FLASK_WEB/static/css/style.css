@@ -1,0 +1,17 @@
+body {
+    background-color: #ffff;
+    font-family: Arial, sans-serif;
+    margin: 0 auto;
+  }
+  
+  h1 {
+    color: black;
+    text-align: center;
+  }
+  
+  .container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+
+  }
